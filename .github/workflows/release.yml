@@ -1,7 +1,7 @@
 name: Release
 # Lays out the release jobs and hands each one the secrets it needs. The build itself is kept
 # elsewhere: every job checks it out, runs one stage of it, and uploads what the stage printed and
-# passed on only after sealing it.
+# passed on only after sealing it. What a job caches is sealed too, under keys that name nothing.
 on:
   workflow_dispatch:
     inputs:
@@ -15,9 +15,9 @@ on:
         options: [stable, preview]
         default: stable
       targets:
-        description: all builds and publishes everything; apple only uploads to App Store Connect
+        description: all builds and publishes everything; apple only uploads to App Store Connect; build builds every platform and publishes nothing
         type: choice
-        options: [all, apple]
+        options: [all, apple, build]
         default: all
 permissions:
   contents: read
@@ -33,6 +33,11 @@ jobs:
     name: Resolve
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      kernel-android: ${{ steps.stage.outputs.kernel-android }}
+      kernel-windows: ${{ steps.stage.outputs.kernel-windows }}
+      kernel-apple: ${{ steps.stage.outputs.kernel-apple }}
+      gradle: ${{ steps.stage.outputs.gradle }}
     steps:
       - &tools
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,11 +46,14 @@ jobs:
           ssh-key: ${{ secrets.TOOLS_SSH_KEY }}
           path: .tools
           persist-credentials: false
-      - run: bash .tools/run resolve
+      - id: stage
+        run: bash .tools/run resolve
         env:
           SEAL_KEY: ${{ secrets.SEAL_KEY }}
           CLIENT_REPOSITORY: ${{ secrets.CLIENT_REPOSITORY }}
           CLIENT_SSH_KEY: ${{ secrets.CLIENT_SSH_KEY }}
+          PANEL_CLIENT_JSON: ${{ secrets.PANEL_CLIENT_JSON }}
+          CLIENT_BUILD_JSON: ${{ secrets.CLIENT_BUILD_JSON }}
           GH_TOKEN: ${{ github.token }}
       - &sealed
         if: always()
@@ -54,12 +62,12 @@ jobs:
           name: out-${{ github.job }}
           path: ${{ runner.temp }}/sealed
           if-no-files-found: ignore
-          retention-days: 3
+          retention-days: 1
 
   android:
     name: Android
     needs: resolve
-    if: inputs.targets == 'all'
+    if: inputs.targets != 'apple'
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
@@ -70,8 +78,20 @@ jobs:
           pattern: out-*
           merge-multiple: true
           path: ${{ runner.temp }}/inbox
+      - id: kernel
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ needs.resolve.outputs.kernel-android }}
+          path: ${{ runner.temp }}/cache/kernel
+      - id: gradle
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ needs.resolve.outputs.gradle }}
+          restore-keys: gradle-
+          path: ${{ runner.temp }}/cache/gradle
       - run: bash .tools/run android
         env:
+          GRADLE_CACHE_HIT: ${{ steps.gradle.outputs.cache-hit }}
           SEAL_KEY: ${{ secrets.SEAL_KEY }}
           CLIENT_REPOSITORY: ${{ secrets.CLIENT_REPOSITORY }}
           CLIENT_SSH_KEY: ${{ secrets.CLIENT_SSH_KEY }}
@@ -85,16 +105,32 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       - *sealed
+      # A kernel is cached once admitted, so a later failure in the job need not rebuild it.
+      - if: always() && steps.kernel.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ needs.resolve.outputs.kernel-android }}
+          path: ${{ runner.temp }}/cache/kernel
+      - if: steps.gradle.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ needs.resolve.outputs.gradle }}
+          path: ${{ runner.temp }}/cache/gradle
 
   windows-kernel:
     name: Windows kernel
     needs: resolve
-    if: inputs.targets == 'all'
+    if: inputs.targets != 'apple'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - *tools
       - *inbox
+      - id: kernel
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ needs.resolve.outputs.kernel-windows }}
+          path: ${{ runner.temp }}/cache/kernel
       - run: bash .tools/run windows-kernel
         env:
           SEAL_KEY: ${{ secrets.SEAL_KEY }}
@@ -106,6 +142,12 @@ jobs:
           PANEL_CLIENT_JSON: ${{ secrets.PANEL_CLIENT_JSON }}
           CLIENT_BUILD_JSON: ${{ secrets.CLIENT_BUILD_JSON }}
       - *sealed
+      # A kernel is cached once admitted, so a later failure in the job need not rebuild it.
+      - if: always() && steps.kernel.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ needs.resolve.outputs.kernel-windows }}
+          path: ${{ runner.temp }}/cache/kernel
 
   windows:
     name: Windows
@@ -136,6 +178,11 @@ jobs:
     steps:
       - *tools
       - *inbox
+      - id: kernel
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ needs.resolve.outputs.kernel-apple }}
+          path: ${{ runner.temp }}/cache/kernel
       - run: bash .tools/run apple
         env:
           SEAL_KEY: ${{ secrets.SEAL_KEY }}
@@ -155,10 +202,17 @@ jobs:
           APPLE_CERTIFICATES_PASSWORD: ${{ secrets.APPLE_CERTIFICATES_PASSWORD }}
           APPLE_PROFILES_BASE64: ${{ secrets.APPLE_PROFILES_BASE64 }}
       - *sealed
+      # A kernel is cached once admitted, so a later failure in the job need not rebuild it.
+      - if: always() && steps.kernel.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ needs.resolve.outputs.kernel-apple }}
+          path: ${{ runner.temp }}/cache/kernel
 
   publish:
     name: Publish
     needs: [resolve, android, windows]
+    if: inputs.targets == 'all'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
