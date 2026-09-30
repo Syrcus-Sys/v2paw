@@ -1,0 +1,175 @@
+name: Release
+# Lays out the release jobs and hands each one the secrets it needs. The build itself is kept
+# elsewhere: every job checks it out, runs one stage of it, and uploads what the stage printed and
+# passed on only after sealing it.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Client branch, tag or commit to build
+        default: main
+        required: true
+      channel:
+        description: stable becomes the release every client updates to; preview is a pre-release
+        type: choice
+        options: [stable, preview]
+        default: stable
+      targets:
+        description: all builds and publishes everything; apple only uploads to App Store Connect
+        type: choice
+        options: [all, apple]
+        default: all
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+env:
+  REF: ${{ inputs.ref }}
+  CHANNEL: ${{ inputs.channel }}
+  TARGETS: ${{ inputs.targets }}
+jobs:
+  resolve:
+    name: Resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - &tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ secrets.TOOLS_REPOSITORY }}
+          ssh-key: ${{ secrets.TOOLS_SSH_KEY }}
+          path: .tools
+          persist-credentials: false
+      - run: bash .tools/run resolve
+        env:
+          SEAL_KEY: ${{ secrets.SEAL_KEY }}
+          CLIENT_REPOSITORY: ${{ secrets.CLIENT_REPOSITORY }}
+          CLIENT_SSH_KEY: ${{ secrets.CLIENT_SSH_KEY }}
+          GH_TOKEN: ${{ github.token }}
+      - &sealed
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: out-${{ github.job }}
+          path: ${{ runner.temp }}/sealed
+          if-no-files-found: ignore
+          retention-days: 3
+
+  android:
+    name: Android
+    needs: resolve
+    if: inputs.targets == 'all'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - *tools
+      - &inbox
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: out-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/inbox
+      - run: bash .tools/run android
+        env:
+          SEAL_KEY: ${{ secrets.SEAL_KEY }}
+          CLIENT_REPOSITORY: ${{ secrets.CLIENT_REPOSITORY }}
+          CLIENT_SSH_KEY: ${{ secrets.CLIENT_SSH_KEY }}
+          CORE_REPOSITORY: ${{ secrets.CORE_REPOSITORY }}
+          CORE_SSH_KEY: ${{ secrets.CORE_SSH_KEY }}
+          CORE_KNOWN_HOSTS: ${{ secrets.CORE_KNOWN_HOSTS }}
+          PANEL_CLIENT_JSON: ${{ secrets.PANEL_CLIENT_JSON }}
+          CLIENT_BUILD_JSON: ${{ secrets.CLIENT_BUILD_JSON }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      - *sealed
+
+  windows-kernel:
+    name: Windows kernel
+    needs: resolve
+    if: inputs.targets == 'all'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - *tools
+      - *inbox
+      - run: bash .tools/run windows-kernel
+        env:
+          SEAL_KEY: ${{ secrets.SEAL_KEY }}
+          CLIENT_REPOSITORY: ${{ secrets.CLIENT_REPOSITORY }}
+          CLIENT_SSH_KEY: ${{ secrets.CLIENT_SSH_KEY }}
+          CORE_REPOSITORY: ${{ secrets.CORE_REPOSITORY }}
+          CORE_SSH_KEY: ${{ secrets.CORE_SSH_KEY }}
+          CORE_KNOWN_HOSTS: ${{ secrets.CORE_KNOWN_HOSTS }}
+          PANEL_CLIENT_JSON: ${{ secrets.PANEL_CLIENT_JSON }}
+          CLIENT_BUILD_JSON: ${{ secrets.CLIENT_BUILD_JSON }}
+      - *sealed
+
+  windows:
+    name: Windows
+    needs: [resolve, windows-kernel]
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - *tools
+      - *inbox
+      - run: bash .tools/run windows
+        env:
+          SEAL_KEY: ${{ secrets.SEAL_KEY }}
+          CLIENT_REPOSITORY: ${{ secrets.CLIENT_REPOSITORY }}
+          CLIENT_SSH_KEY: ${{ secrets.CLIENT_SSH_KEY }}
+          PANEL_CLIENT_JSON: ${{ secrets.PANEL_CLIENT_JSON }}
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      - *sealed
+
+  apple:
+    name: Apple
+    needs: resolve
+    runs-on: macos-26
+    timeout-minutes: 150
+    steps:
+      - *tools
+      - *inbox
+      - run: bash .tools/run apple
+        env:
+          SEAL_KEY: ${{ secrets.SEAL_KEY }}
+          CLIENT_REPOSITORY: ${{ secrets.CLIENT_REPOSITORY }}
+          CLIENT_SSH_KEY: ${{ secrets.CLIENT_SSH_KEY }}
+          CORE_REPOSITORY: ${{ secrets.CORE_REPOSITORY }}
+          CORE_SSH_KEY: ${{ secrets.CORE_SSH_KEY }}
+          CORE_KNOWN_HOSTS: ${{ secrets.CORE_KNOWN_HOSTS }}
+          PANEL_CLIENT_JSON: ${{ secrets.PANEL_CLIENT_JSON }}
+          CLIENT_BUILD_JSON: ${{ secrets.CLIENT_BUILD_JSON }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ASC_KEY_BASE64: ${{ secrets.APPLE_ASC_KEY_BASE64 }}
+          APPLE_ASC_KEY_ID: ${{ secrets.APPLE_ASC_KEY_ID }}
+          APPLE_ASC_ISSUER_ID: ${{ secrets.APPLE_ASC_ISSUER_ID }}
+          APPLE_DISTRIBUTION_P12_BASE64: ${{ secrets.APPLE_DISTRIBUTION_P12_BASE64 }}
+          APPLE_INSTALLER_P12_BASE64: ${{ secrets.APPLE_INSTALLER_P12_BASE64 }}
+          APPLE_CERTIFICATES_PASSWORD: ${{ secrets.APPLE_CERTIFICATES_PASSWORD }}
+          APPLE_PROFILES_BASE64: ${{ secrets.APPLE_PROFILES_BASE64 }}
+      - *sealed
+
+  publish:
+    name: Publish
+    needs: [resolve, android, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - *tools
+      - *inbox
+      - run: bash .tools/run publish
+        env:
+          SEAL_KEY: ${{ secrets.SEAL_KEY }}
+          PANEL_CLIENT_JSON: ${{ secrets.PANEL_CLIENT_JSON }}
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          GH_TOKEN: ${{ github.token }}
+      - *sealed
