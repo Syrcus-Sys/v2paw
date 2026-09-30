@@ -131,7 +131,7 @@ jobs:
   apple:
     name: Apple
     needs: resolve
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 150
     steps:
       - *tools

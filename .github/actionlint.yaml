@@ -1,4 +1,5 @@
 self-hosted-runner:
   labels:
-    # An official preview image, newer than actionlint's bundled list.
+    # Official preview images, newer than actionlint's bundled list.
     - windows-2025-vs2026
+    - xcode-27
