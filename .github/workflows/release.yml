@@ -38,6 +38,7 @@ jobs:
       kernel-windows: ${{ steps.stage.outputs.kernel-windows }}
       kernel-apple: ${{ steps.stage.outputs.kernel-apple }}
       gradle: ${{ steps.stage.outputs.gradle }}
+      ccache: ${{ steps.stage.outputs.ccache }}
     steps:
       - &tools
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -89,9 +90,16 @@ jobs:
           key: ${{ needs.resolve.outputs.gradle }}
           restore-keys: gradle-
           path: ${{ runner.temp }}/cache/gradle
+      - id: ccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ needs.resolve.outputs.ccache }}
+          restore-keys: ccache-
+          path: ${{ runner.temp }}/cache/ccache
       - run: bash .tools/run android
         env:
           GRADLE_CACHE_HIT: ${{ steps.gradle.outputs.cache-hit }}
+          CCACHE_CACHE_HIT: ${{ steps.ccache.outputs.cache-hit }}
           SEAL_KEY: ${{ secrets.SEAL_KEY }}
           CLIENT_REPOSITORY: ${{ secrets.CLIENT_REPOSITORY }}
           CLIENT_SSH_KEY: ${{ secrets.CLIENT_SSH_KEY }}
@@ -116,6 +124,11 @@ jobs:
         with:
           key: ${{ needs.resolve.outputs.gradle }}
           path: ${{ runner.temp }}/cache/gradle
+      - if: steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ needs.resolve.outputs.ccache }}
+          path: ${{ runner.temp }}/cache/ccache
 
   windows-kernel:
     name: Windows kernel
