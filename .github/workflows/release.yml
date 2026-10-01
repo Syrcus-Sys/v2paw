@@ -39,6 +39,8 @@ jobs:
       kernel-apple: ${{ steps.stage.outputs.kernel-apple }}
       gradle: ${{ steps.stage.outputs.gradle }}
       ccache: ${{ steps.stage.outputs.ccache }}
+      pods: ${{ steps.stage.outputs.pods }}
+      xcode: ${{ steps.stage.outputs.xcode }}
     steps:
       - &tools
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -196,8 +198,22 @@ jobs:
         with:
           key: ${{ needs.resolve.outputs.kernel-apple }}
           path: ${{ runner.temp }}/cache/kernel
+      - id: pods
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ needs.resolve.outputs.pods }}
+          restore-keys: pods-
+          path: ${{ runner.temp }}/cache/pods
+      - id: xcode
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ needs.resolve.outputs.xcode }}
+          restore-keys: xcode-
+          path: ${{ runner.temp }}/cache/xcode
       - run: bash .tools/run apple
         env:
+          PODS_CACHE_HIT: ${{ steps.pods.outputs.cache-hit }}
+          XCODE_CACHE_HIT: ${{ steps.xcode.outputs.cache-hit }}
           SEAL_KEY: ${{ secrets.SEAL_KEY }}
           CLIENT_REPOSITORY: ${{ secrets.CLIENT_REPOSITORY }}
           CLIENT_SSH_KEY: ${{ secrets.CLIENT_SSH_KEY }}
@@ -221,6 +237,16 @@ jobs:
         with:
           key: ${{ needs.resolve.outputs.kernel-apple }}
           path: ${{ runner.temp }}/cache/kernel
+      - if: steps.pods.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ needs.resolve.outputs.pods }}
+          path: ${{ runner.temp }}/cache/pods
+      - if: steps.xcode.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: ${{ needs.resolve.outputs.xcode }}
+          path: ${{ runner.temp }}/cache/xcode
 
   publish:
     name: Publish
