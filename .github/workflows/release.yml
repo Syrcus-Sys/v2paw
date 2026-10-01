@@ -10,7 +10,7 @@ on:
         default: main
         required: true
       channel:
-        description: stable becomes the release every client updates to; preview is a pre-release
+        description: stable becomes the one release every client updates to; preview only builds or goes to TestFlight (targets build or apple)
         type: choice
         options: [stable, preview]
         default: stable
