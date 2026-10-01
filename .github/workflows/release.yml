@@ -250,8 +250,10 @@ jobs:
 
   publish:
     name: Publish
-    needs: [resolve, android, windows]
-    if: inputs.targets == 'all'
+    # Waits for Apple too, whose upload lets the signed manifest declare iOS and macOS, but publishes
+    # Android and Windows whether or not Apple got there.
+    needs: [resolve, android, windows, apple]
+    if: ${{ !cancelled() && inputs.targets == 'all' && needs.android.result == 'success' && needs.windows.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
