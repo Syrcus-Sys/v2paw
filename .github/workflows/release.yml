@@ -108,6 +108,8 @@ jobs:
           CORE_REPOSITORY: ${{ secrets.CORE_REPOSITORY }}
           CORE_SSH_KEY: ${{ secrets.CORE_SSH_KEY }}
           CORE_KNOWN_HOSTS: ${{ secrets.CORE_KNOWN_HOSTS }}
+          GSTRIP_REPOSITORY: ${{ secrets.GSTRIP_REPOSITORY }}
+          GSTRIP_SSH_KEY: ${{ secrets.GSTRIP_SSH_KEY }}
           PANEL_CLIENT_JSON: ${{ secrets.PANEL_CLIENT_JSON }}
           CLIENT_BUILD_JSON: ${{ secrets.CLIENT_BUILD_JSON }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
